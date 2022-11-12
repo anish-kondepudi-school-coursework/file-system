@@ -15,27 +15,27 @@ struct __attribute__ ((__packed__)) superblock_t {
 	uint16_t data_block_start_index;
 	uint16_t num_data_blocks;
 	uint8_t num_fat_blocks;
-}
+};
 
 //block_disk_count(void);
 struct fat_t { //should this have the packed attribute?
 	uint16_t num_entries; //equal to the num_data_blocks
 	uint16_t fat_free;
 	uint16_t *entries;
-}
+};
 
 struct __attribute__ ((__packed__)) file_entry_t {
 	uint8_t filename[16];
 	uint32_t file_size;
 	uint16_t index_first_data_block;
 	//does padding have to be part of this?
-}
+};
 
 struct superblock_t *superblock;
 struct fat_t *fat;
-struct file_entry_t root_directory[128];
+struct file_entry_t *root_directory;
 uint8_t num_files_open;
-bool disk_open;
+int disk_open;
 
 int fs_mount(const char *diskname)
 {
@@ -46,21 +46,31 @@ int fs_mount(const char *diskname)
 	if (block_disk_open(diskname) < 0) {
 		return -1;
 	}
-	superblock = malloc(sizeof(superblock_t));
+	disk_open = 1;
+	superblock = malloc(sizeof(struct superblock_t));
 
 	block_read(0, superblock);
 
-	uint8_t signature_array = ['E','C','S','1','5','0','F','S'];
+	uint8_t signature_array[8];// = ['E','C','S','1','5','0','F','S'];
+	
 	uint64_t true_signature;
 	memcpy(&true_signature, signature_array, 8); //probably a better way to do this lol
-
-	if (superblock->signature != true_signature) {
+	signature_array[0] = 'E';
+	signature_array[1] = 'C';
+	signature_array[2] = 'S';
+	signature_array[3] = '1';
+	signature_array[4] = '5';
+	signature_array[5] = '0';
+	signature_array[6] = 'F';
+	signature_array[7] = 'S';
+	if (memcmp(&(superblock->signature), signature_array, 8) != 0) {
 		printf("mismatched signatures!\n"); //for testing only, like all the following print statements
-		return -1
+		return -1;
 	}
 
 	if (superblock->num_data_blocks > 0) {
 		printf("nice, %d data blocks\n", superblock->num_data_blocks);
+	}
 	else {
 		return -1;
 	}
@@ -76,7 +86,7 @@ int fs_mount(const char *diskname)
 		return -1;
 	}
 
-	root_directory = malloc(128 * sizeof(file_entry_t)); //starts off empty anyways
+	root_directory = malloc(128 * sizeof(struct file_entry_t)); //starts off empty anyways
 	num_files_open = 0;
 	return 0;
 }
@@ -86,7 +96,7 @@ int fs_umount(void)
 	/* TODO: Phase 1 */
 	if (!disk_open || num_files_open) return -1;
 	if (block_disk_close() < 0) return -1;
-	disk_open = false;
+	disk_open = 0;
 	free(superblock);
 	free(fat);
 	free(root_directory);
