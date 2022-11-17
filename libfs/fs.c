@@ -320,9 +320,40 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
+	// Check if filename is valid for deletion
 	if (!validate_file_deletion(filename)) {
 		return -1;
 	}
+
+	// Find file from root directory
+	file_entry_t file_entry = NULL;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (strcmp(root_directory[i].filename, filename) == 0) {
+			file_entry = &root_directory[i];
+			break;
+		}
+	}
+
+	// Return error if no file was found in directory
+	if (file_entry == NULL) {
+		return -1;
+	}
+
+	// Clear FAT chain
+	int fat_idx = file_entry->index_first_data_block;
+	while (fat_idx != FAT_EOC) {
+		uint16_t next_fat_idx = fat->entries[fat_idx];
+		fat->entries[fat_idx] = 0;
+		fat_idx = next_fat_idx;
+		fat->fat_free++;
+	}
+
+	// Clear Root Entry
+	file_entry->filename[0] = 0;
+	file_entry->file_size = 0;
+	file_entry->index_first_data_block = 0;
+
+	return 0;
 }
 
 int fs_ls(void)
