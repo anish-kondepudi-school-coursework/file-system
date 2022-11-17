@@ -9,10 +9,8 @@
 #include "fs.h"
 
 #define BLOCK_SIZE 4096
-#define ROOT_ENTRIES 128
 
 #define SIGNATURE_LENGTH 8
-
 #define FILENAME_LENGTH 16
 
 #define SUPERBLOCK_PADDING 4079
@@ -133,7 +131,7 @@ int fs_mount(const char *diskname)
 	// Allocate memory for the superblock, fat, and root directory
 	superblock = malloc(sizeof(struct superblock));
 	fat = malloc(sizeof(struct fat));
-	root_directory = malloc(ROOT_ENTRIES * sizeof(struct file_entry));
+	root_directory = malloc(FS_FILE_MAX_COUNT * sizeof(struct file_entry));
 	if (superblock == NULL || fat == NULL || root_directory == NULL) {
 		return -1;
 	}
