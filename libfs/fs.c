@@ -216,8 +216,7 @@ int fs_info(void)
 	return 0;
 }
 
-bool validate_file_creation(const char *filename)
-{
+bool validate_filename(const char *filename) {
 	// Filename can't be empty
 	if (filename[0] == '\0') {
 		return false;
@@ -237,6 +236,16 @@ bool validate_file_creation(const char *filename)
 
 	// Filename cannot be longer than 16 bytes
 	if (strlen(filename) > FS_FILENAME_LEN) {
+		return false;
+	}
+
+	return true;
+}
+
+bool validate_file_creation(const char *filename)
+{
+	// Validate filename
+	if (!validate_filename(filename)) {
 		return false;
 	}
 
@@ -261,6 +270,29 @@ bool validate_file_creation(const char *filename)
 	}
 
     return true;
+}
+
+bool validate_file_deletion(const char *filename) {
+	// Validate filename
+	if (!validate_filename(filename)) {
+		return false;
+	}
+
+	// File must exists in root directory
+	bool file_exists = false;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		char *current_file = (char *) root_directory[i].filename;
+        if(strcmp(current_file, filename) == 0) {
+			file_exists = true;
+			break;
+		}
+	}
+
+	if (!file_exists) {
+		return false;
+	}
+
+	return true;
 }
 
 int fs_create(const char *filename)
@@ -288,7 +320,9 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
-	/* TODO: Phase 2 */
+	if (!validate_file_deletion(filename)) {
+		return -1;
+	}
 }
 
 int fs_ls(void)
