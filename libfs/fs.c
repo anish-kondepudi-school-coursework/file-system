@@ -166,18 +166,34 @@ int fs_mount(const char *diskname)
 
 int fs_umount(void)
 {
+	// Ensure disk is open
 	if (!disk_open || num_files_open) {
 		return -1;
 	}
 
+	// Write all FAT entries to disk
+	for (int i = 0; i < superblock->num_fat_blocks; i++) {
+		if (block_write(i + 1, (u_int8_t*) fat->entries + (i * BLOCK_SIZE)) == -1) {
+			return -1;
+		}
+	}
+
+	// Write Root Directory to disk
+	if (block_write(superblock->root_directory_block_index, root_directory) == -1) {
+		return -1;
+	}
+
+	// Close disk
 	if (block_disk_close() == -1) {
 		return -1;
 	}
 
+	// Free local disk data members
 	free(superblock);
 	free(fat);
 	free(root_directory);
 
+	// Mark disc as closed
 	disk_open = false;
 	return 0;
 }
