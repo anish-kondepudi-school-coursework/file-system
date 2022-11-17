@@ -200,9 +200,74 @@ int fs_info(void)
 	return 0;
 }
 
+bool validate_file_creation(const char *filename)
+{
+	// Filename can't be empty
+	if (filename == '\0') {
+		return false;
+	}
+
+	// Filename must contain null terminator in first 16 bytes
+	bool filename_contains_null_terminator = false;
+	for (int i = 0; i < FS_FILENAME_LEN; i++) {
+		if (filename[i] == '\0') {
+			filename_contains_null_terminator = true;
+		}
+	}
+
+	if (!filename_contains_null_terminator) {
+		return false;
+	}
+
+	// Filename cannot be longer than 16 bytes
+	if (strlen(filename) > FS_FILENAME_LEN) {
+		return false;
+	}
+
+    // Root directory must have enough space for new file
+	int num_files_in_root_directory = 0;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename != '\0') {
+			num_files_in_root_directory++;
+		}
+	}
+
+	if (num_files_in_root_directory == FS_FILE_MAX_COUNT) {
+		return false;
+	}
+
+	// File should not already exists
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		char *current_file = (char *) root_directory[i].filename;
+        if(strcmp(current_file, filename) == 0) {
+			return false;
+		}
+	}
+
+    return true;
+}
+
 int fs_create(const char *filename)
 {
-	/* TODO: Phase 2 */
+	// Check if filename is valid for creation
+	if (!validate_file_creation(filename)) {
+		return -1;
+	}
+
+	// Create empty file entry in root_directory
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename != 0) {
+			continue;
+		}
+
+		strcpy(root_directory[i].filename, filename);
+		root_directory[i].file_size = 0;
+		root_directory[i].index_first_data_block = FAT_EOC;
+		return 0;
+	}
+
+	// If no file created, return error status
+	return -1;
 }
 
 int fs_delete(const char *filename)
