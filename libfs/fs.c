@@ -219,7 +219,7 @@ int fs_info(void)
 bool validate_file_creation(const char *filename)
 {
 	// Filename can't be empty
-	if (filename == '\0') {
+	if (filename[0] == '\0') {
 		return false;
 	}
 
@@ -243,7 +243,7 @@ bool validate_file_creation(const char *filename)
     // Root directory must have enough space for new file
 	int num_files_in_root_directory = 0;
 	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
-		if (root_directory[i].filename != '\0') {
+		if (root_directory[i].filename[0] != '\0') {
 			num_files_in_root_directory++;
 		}
 	}
@@ -272,7 +272,7 @@ int fs_create(const char *filename)
 
 	// Create empty file entry in root_directory
 	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
-		if (root_directory[i].filename != 0) {
+		if (root_directory[i].filename[0] != 0) {
 			continue;
 		}
 
