@@ -425,9 +425,42 @@ int fs_open(const char *filename)
 		return -1;
 	}
 
-	// TODO: Implement fs_open
+	// Find free file descriptor
+	int free_file_descriptor_idx = -1;
+	for (int i = 0; i < FILE_NUM; i++) {
+		if (file_descriptors[i] == NULL) {
+			free_file_descriptor_idx = i;
+			break;
+		}
+	}
 
-	return 0;
+	if (free_file_descriptor_idx == -1) {
+		return -1;
+	}
+
+	// Find file entry for filename
+	file_entry_t file_entry = NULL;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (strcmp(root_directory[i].filename, filename) == 0) {
+			file_entry = &root_directory[i];
+			break;
+		}
+	}
+
+	if (file_entry == NULL) {
+		return -1;
+	}
+
+	// Create file descriptor
+	file_descriptors[free_file_descriptor_idx] = malloc(sizeof(sizeof(struct file_descriptor)));
+	if(file_descriptors[free_file_descriptor_idx] == NULL) {
+		return -1;
+	}
+
+	file_descriptors[free_file_descriptor_idx]->file_entry = file_entry;
+	file_descriptors[free_file_descriptor_idx]->offset = 0;
+
+	return free_file_descriptor_idx;
 }
 
 int fs_close(int fd)
