@@ -19,6 +19,8 @@
 #define FAT_EOC 0xFFFF
 #define FIRST_FAT_BLOCK_INDEX 1
 
+#define FILE_NUM 32
+
 struct __attribute__ ((__packed__)) superblock {
 	uint64_t signature;
 	uint16_t num_blocks_of_virtual_disk;
@@ -42,13 +44,20 @@ struct __attribute__ ((__packed__)) file_entry {
 	uint8_t padding[FILE_ENTRY_PADDING];
 };
 
+struct file_descriptor {
+	file_entry_t file_entry;
+	int offset;
+};
+
 typedef struct superblock *superblock_t;
 typedef struct fat *fat_t;
 typedef struct file_entry *file_entry_t;
+typedef struct file_descriptor *file_descriptor_t;
 
 superblock_t superblock;
 fat_t fat;
 file_entry_t root_directory; //will be an array of size 128 though, each of size 32
+file_descriptor_t *file_descriptors;
 
 uint8_t num_files_open;
 bool disk_open;
@@ -132,7 +141,11 @@ int fs_mount(const char *diskname)
 	superblock = malloc(sizeof(struct superblock));
 	fat = malloc(sizeof(struct fat));
 	root_directory = malloc(FS_FILE_MAX_COUNT * sizeof(struct file_entry));
-	if (superblock == NULL || fat == NULL || root_directory == NULL) {
+	file_descriptors = malloc(FILE_NUM * sizeof(struct file_descriptor));
+	if (superblock == NULL
+		|| fat == NULL
+		|| root_directory == NULL
+		|| file_descriptors == NULL) {
 		return -1;
 	}
 
@@ -160,6 +173,11 @@ int fs_mount(const char *diskname)
 
 	// Read root directory from disk
 	block_read(superblock->root_directory_block_index, root_directory);
+
+	// Initialize file_descriptors
+	for (int i = 0; i < FILE_NUM; i++) {
+		file_descriptors[FILE_NUM] = NULL;
+	}
 
 	return 0;
 }
@@ -242,6 +260,16 @@ bool validate_filename(const char *filename) {
 	return true;
 }
 
+bool file_exists_in_root_directory(const char *filename) {
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		char *current_file = (char *) root_directory[i].filename;
+        if(strcmp(current_file, filename) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool validate_file_creation(const char *filename)
 {
 	// Validate filename
@@ -262,11 +290,8 @@ bool validate_file_creation(const char *filename)
 	}
 
 	// File should not already exists
-	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
-		char *current_file = (char *) root_directory[i].filename;
-        if(strcmp(current_file, filename) == 0) {
-			return false;
-		}
+	if (file_exists_in_root_directory(filename)) {
+		return false;
 	}
 
     return true;
@@ -279,16 +304,33 @@ bool validate_file_deletion(const char *filename) {
 	}
 
 	// File must exists in root directory
-	bool file_exists = false;
-	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
-		char *current_file = (char *) root_directory[i].filename;
-        if(strcmp(current_file, filename) == 0) {
-			file_exists = true;
-			break;
+	if (!file_exists_in_root_directory(filename)) {
+		return false;
+	}
+
+	return true;
+}
+
+bool validate_file_opening(const char *filename) {
+	// Validate filename
+	if (!validate_filename(filename)) {
+		return false;
+	}
+
+	// File must exist in root directory
+	if (!file_exists_in_root_directory(filename)) {
+		return false;
+	}
+
+	// File descriptor must be available
+	int free_file_descriptors = 0;
+	for (int i = 0; i < FILE_NUM; i++) {
+		if (file_descriptors[i] != NULL) {
+			free_file_descriptors++;
 		}
 	}
 
-	if (!file_exists) {
+	if (free_file_descriptors == 0) {
 		return false;
 	}
 
@@ -377,7 +419,15 @@ int fs_ls(void)
 
 int fs_open(const char *filename)
 {
-	/* TODO: Phase 3 */
+	if (!disk_open
+		|| block_disk_count() == -1
+		|| !validate_file_opening(filename)) {
+		return -1;
+	}
+
+	// TODO: Implement fs_open
+
+	return 0;
 }
 
 int fs_close(int fd)
