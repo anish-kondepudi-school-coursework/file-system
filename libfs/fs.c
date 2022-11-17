@@ -331,6 +331,7 @@ int fs_delete(const char *filename)
 		if (strcmp(root_directory[i].filename, filename) == 0) {
 			file_entry = &root_directory[i];
 			break;
+
 		}
 	}
 
@@ -358,7 +359,20 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
-	/* TODO: Phase 2 */
+	printf("FS Ls:\n");
+
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename[0] == 0) {
+			continue;
+		}
+
+		printf("file: %s, size: %d, data_blk: %d\n",
+			root_directory[i].filename,
+			root_directory[i].file_size,
+			root_directory[i].index_first_data_block);
+	}
+
+	return 0;
 }
 
 int fs_open(const char *filename)
