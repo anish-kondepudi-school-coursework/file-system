@@ -69,12 +69,19 @@ bool validate_superblock() {
 	}
 
 	// Validate block count for superblock
-	int expected_block_count = superblock->num_data_blocks + superblock->num_fat_blocks + 2;
+	int expected_block_count_from_manual_calculation = superblock->num_data_blocks + superblock->num_fat_blocks + 2;
 	int disk_block_count = block_disk_count();
-	if (disk_block_count != expected_block_count) {
-		printf("total block count is not adding up.\n Found: %d\nExpected %d\n",
+	if (disk_block_count != expected_block_count_from_manual_calculation) {
+		printf("total block count is not adding up from block_disk_count.\n Found: %d\nExpected %d\n",
 			disk_block_count,
-			expected_block_count);
+			expected_block_count_from_manual_calculation);
+		return false;
+	}
+
+	if (superblock->num_blocks_of_virtual_disk != expected_block_count_from_manual_calculation) {
+		printf("total block count is not adding up from superblock->num_blocks_of_virtual_disk.\n Found: %d\nExpected %d\n",
+			disk_block_count,
+			expected_block_count_from_manual_calculation);
 		return false;
 	}
 
