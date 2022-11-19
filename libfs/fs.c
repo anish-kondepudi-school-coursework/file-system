@@ -9,10 +9,8 @@
 #include "fs.h"
 
 #define BLOCK_SIZE 4096
-#define ROOT_ENTRIES 128
 
 #define SIGNATURE_LENGTH 8
-
 #define FILENAME_LENGTH 16
 
 #define SUPERBLOCK_PADDING 4079
@@ -133,7 +131,7 @@ int fs_mount(const char *diskname)
 	// Allocate memory for the superblock, fat, and root directory
 	superblock = malloc(sizeof(struct superblock));
 	fat = malloc(sizeof(struct fat));
-	root_directory = malloc(ROOT_ENTRIES * sizeof(struct file_entry));
+	root_directory = malloc(FS_FILE_MAX_COUNT * sizeof(struct file_entry));
 	if (superblock == NULL || fat == NULL || root_directory == NULL) {
 		return -1;
 	}
@@ -168,18 +166,34 @@ int fs_mount(const char *diskname)
 
 int fs_umount(void)
 {
+	// Ensure disk is open
 	if (!disk_open || num_files_open) {
 		return -1;
 	}
 
+	// Write all FAT entries to disk
+	for (int i = 0; i < superblock->num_fat_blocks; i++) {
+		if (block_write(i + 1, (u_int8_t*) fat->entries + (i * BLOCK_SIZE)) == -1) {
+			return -1;
+		}
+	}
+
+	// Write Root Directory to disk
+	if (block_write(superblock->root_directory_block_index, root_directory) == -1) {
+		return -1;
+	}
+
+	// Close disk
 	if (block_disk_close() == -1) {
 		return -1;
 	}
 
+	// Free local disk data members
 	free(superblock);
 	free(fat);
 	free(root_directory);
 
+	// Mark disc as closed
 	disk_open = false;
 	return 0;
 }
@@ -202,19 +216,163 @@ int fs_info(void)
 	return 0;
 }
 
+bool validate_filename(const char *filename) {
+	// Filename can't be empty
+	if (filename[0] == '\0') {
+		return false;
+	}
+
+	// Filename must contain null terminator in first 16 bytes
+	bool filename_contains_null_terminator = false;
+	for (int i = 0; i < FS_FILENAME_LEN; i++) {
+		if (filename[i] == '\0') {
+			filename_contains_null_terminator = true;
+		}
+	}
+
+	if (!filename_contains_null_terminator) {
+		return false;
+	}
+
+	// Filename cannot be longer than 16 bytes
+	if (strlen(filename) > FS_FILENAME_LEN) {
+		return false;
+	}
+
+	return true;
+}
+
+bool validate_file_creation(const char *filename)
+{
+	// Validate filename
+	if (!validate_filename(filename)) {
+		return false;
+	}
+
+    // Root directory must have enough space for new file
+	int num_files_in_root_directory = 0;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename[0] != '\0') {
+			num_files_in_root_directory++;
+		}
+	}
+
+	if (num_files_in_root_directory == FS_FILE_MAX_COUNT) {
+		return false;
+	}
+
+	// File should not already exists
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		char *current_file = (char *) root_directory[i].filename;
+        if(strcmp(current_file, filename) == 0) {
+			return false;
+		}
+	}
+
+    return true;
+}
+
+bool validate_file_deletion(const char *filename) {
+	// Validate filename
+	if (!validate_filename(filename)) {
+		return false;
+	}
+
+	// File must exists in root directory
+	bool file_exists = false;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		char *current_file = (char *) root_directory[i].filename;
+        if(strcmp(current_file, filename) == 0) {
+			file_exists = true;
+			break;
+		}
+	}
+
+	if (!file_exists) {
+		return false;
+	}
+
+	return true;
+}
+
 int fs_create(const char *filename)
 {
-	/* TODO: Phase 2 */
+	// Check if filename is valid for creation
+	if (!validate_file_creation(filename)) {
+		return -1;
+	}
+
+	// Create empty file entry in root_directory
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename[0] != 0) {
+			continue;
+		}
+
+		strcpy(root_directory[i].filename, filename);
+		root_directory[i].file_size = 0;
+		root_directory[i].index_first_data_block = FAT_EOC;
+		return 0;
+	}
+
+	// If no file created, return error status
+	return -1;
 }
 
 int fs_delete(const char *filename)
 {
-	/* TODO: Phase 2 */
+	// Check if filename is valid for deletion
+	if (!validate_file_deletion(filename)) {
+		return -1;
+	}
+
+	// Find file from root directory
+	file_entry_t file_entry = NULL;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (strcmp(root_directory[i].filename, filename) == 0) {
+			file_entry = &root_directory[i];
+			break;
+
+		}
+	}
+
+	// Return error if no file was found in directory
+	if (file_entry == NULL) {
+		return -1;
+	}
+
+	// Clear FAT chain
+	int fat_idx = file_entry->index_first_data_block;
+	while (fat_idx != FAT_EOC) {
+		uint16_t next_fat_idx = fat->entries[fat_idx];
+		fat->entries[fat_idx] = 0;
+		fat_idx = next_fat_idx;
+		fat->fat_free++;
+	}
+
+	// Clear Root Entry
+	file_entry->filename[0] = 0;
+	file_entry->file_size = 0;
+	file_entry->index_first_data_block = 0;
+
+	return 0;
 }
 
 int fs_ls(void)
 {
-	/* TODO: Phase 2 */
+	printf("FS Ls:\n");
+
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename[0] == 0) {
+			continue;
+		}
+
+		printf("file: %s, size: %d, data_blk: %d\n",
+			root_directory[i].filename,
+			root_directory[i].file_size,
+			root_directory[i].index_first_data_block);
+	}
+
+	return 0;
 }
 
 int fs_open(const char *filename)
