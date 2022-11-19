@@ -507,7 +507,7 @@ int fs_open(const char *filename)
 
 bool validate_fd(int fd) {
 	// Validate that fd is in range
-	if (fd < 0 || fd > FILE_NUM) {
+	if (fd < 0 || fd >= FILE_NUM) {
 		return false;
 	}
 
