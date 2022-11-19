@@ -45,7 +45,7 @@ struct __attribute__ ((__packed__)) file_entry {
 };
 
 struct file_descriptor_entry {
-	file_entry_t file_entry;
+	struct file_entry *file_entry;
 	int offset;
 	int fd;
 	bool is_open;
