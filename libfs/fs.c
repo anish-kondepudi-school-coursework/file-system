@@ -505,8 +505,18 @@ int fs_open(const char *filename)
 	return free_file_descriptor_entry->fd;
 }
 
-bool validate_fd_in_bounds(int fd) {
-	return (fd < 0 || fd > FILE_NUM);
+bool validate_fd(int fd) {
+	// Validate that fd is in range
+	if (fd < 0 || fd > FILE_NUM) {
+		return false;
+	}
+
+	// Validate that fd is open
+	if (!file_descriptor_table[fd]->is_open) {
+		return false;
+	}
+
+	return true;
 }
 
 int fs_close(int fd)
@@ -516,13 +526,8 @@ int fs_close(int fd)
 		return -1;
 	}
 
-	// Validate that fd is in range
-	if (!validate_fd_in_bounds(fd)) {
-		return -1;
-	}
-
-	// Validate that fd is open
-	if (!file_descriptor_table[fd]->is_open) {
+	// Validate fd
+	if (!validate_fd(fd)) {
 		return -1;
 	}
 
@@ -538,13 +543,8 @@ int fs_stat(int fd)
 		return -1;
 	}
 
-	// Validate that fd is in range
-	if (!validate_fd_in_bounds(fd)) {
-		return -1;
-	}
-
-	// Validate that fd is open
-	if (!file_descriptor_table[fd]->is_open) {
+	// Validate fd
+	if (!validate_fd(fd)) {
 		return -1;
 	}
 
@@ -558,7 +558,13 @@ int fs_lseek(int fd, size_t offset)
 		return -1;
 	}
 
-	/* TODO: Phase 3 */
+	// Validate fd
+	if (!validate_fd(fd)) {
+		return -1;
+	}
+
+	file_descriptor_table[fd]->offset = offset;
+	return 0;
 }
 
 int fs_write(int fd, void *buf, size_t count)
