@@ -486,7 +486,19 @@ int fs_open(const char *filename)
 
 int fs_close(int fd)
 {
-	/* TODO: Phase 3 */
+	// Validate that fd is in range
+	if (fd < 0 || fd > FILE_NUM) {
+		return -1;
+	}
+
+	// Validate that fd is open
+	if (!file_descriptor_table[fd]->is_open) {
+		return -1;
+	}
+
+	// Close fd
+	file_descriptor_table[fd]->is_open = false;
+	return 0;
 }
 
 int fs_stat(int fd)
