@@ -506,17 +506,8 @@ int fs_open(const char *filename)
 }
 
 bool validate_fd(int fd) {
-	// Validate that fd is in range
-	if (fd < 0 || fd >= FILE_NUM) {
-		return false;
-	}
-
-	// Validate that fd is open
-	if (!file_descriptor_table[fd]->is_open) {
-		return false;
-	}
-
-	return true;
+	// Validate that fd is in range and that fd is open
+	return fd >= 0 && fd < FILE_NUM && file_descriptor_table[fd]->is_open;
 }
 
 int fs_close(int fd)
