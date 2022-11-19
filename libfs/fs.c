@@ -19,6 +19,8 @@
 #define FAT_EOC 0xFFFF
 #define FIRST_FAT_BLOCK_INDEX 1
 
+#define FILE_NUM 32
+
 struct __attribute__ ((__packed__)) superblock {
 	uint64_t signature;
 	uint16_t num_blocks_of_virtual_disk;
@@ -42,13 +44,22 @@ struct __attribute__ ((__packed__)) file_entry {
 	uint8_t padding[FILE_ENTRY_PADDING];
 };
 
+struct file_descriptor_entry {
+	struct file_entry *file_entry;
+	int offset;
+	int fd;
+	bool is_open;
+};
+
 typedef struct superblock *superblock_t;
 typedef struct fat *fat_t;
 typedef struct file_entry *file_entry_t;
+typedef struct file_descriptor_entry *file_descriptor_entry_t;
 
 superblock_t superblock;
 fat_t fat;
 file_entry_t root_directory; //will be an array of size 128 though, each of size 32
+file_descriptor_entry_t *file_descriptor_table;
 
 uint8_t num_files_open;
 bool disk_open;
@@ -116,6 +127,24 @@ bool validate_fat() {
 	return true;
 }
 
+int initialize_file_descriptor_table() {
+	for (int fd = 0; fd < FILE_NUM; fd++) {
+		file_descriptor_entry_t file_descriptor_entry = malloc(sizeof(struct file_descriptor_entry));
+		if (file_descriptor_entry == NULL) {
+			return -1;
+		}
+
+		file_descriptor_entry->file_entry = NULL;
+		file_descriptor_entry->offset = 0;
+		file_descriptor_entry->fd = fd;
+		file_descriptor_entry->is_open = false;
+
+		file_descriptor_table[fd] = file_descriptor_entry;
+	}
+
+	return 0;
+}
+
 int fs_mount(const char *diskname)
 {
 	// Handle case where disk is already open
@@ -132,7 +161,11 @@ int fs_mount(const char *diskname)
 	superblock = malloc(sizeof(struct superblock));
 	fat = malloc(sizeof(struct fat));
 	root_directory = malloc(FS_FILE_MAX_COUNT * sizeof(struct file_entry));
-	if (superblock == NULL || fat == NULL || root_directory == NULL) {
+	file_descriptor_table = malloc(FILE_NUM * sizeof(struct file_descriptor_entry));
+	if (superblock == NULL
+		|| fat == NULL
+		|| root_directory == NULL
+		|| file_descriptor_table == NULL) {
 		return -1;
 	}
 
@@ -160,6 +193,11 @@ int fs_mount(const char *diskname)
 
 	// Read root directory from disk
 	block_read(superblock->root_directory_block_index, root_directory);
+
+	// Initialize file_descriptors_table
+	if (initialize_file_descriptor_table() == -1) {
+		return -1;
+	}
 
 	return 0;
 }
@@ -192,6 +230,10 @@ int fs_umount(void)
 	free(superblock);
 	free(fat);
 	free(root_directory);
+	for (int i = 0; i < FILE_NUM; i++) {
+		free(file_descriptor_table[i]);
+	}
+	free(file_descriptor_table);
 
 	// Mark disc as closed
 	disk_open = false;
@@ -217,6 +259,11 @@ int fs_info(void)
 }
 
 bool validate_filename(const char *filename) {
+	// Filename can't be null
+	if (filename == NULL) {
+		return false;
+	}
+
 	// Filename can't be empty
 	if (filename[0] == '\0') {
 		return false;
@@ -242,6 +289,16 @@ bool validate_filename(const char *filename) {
 	return true;
 }
 
+bool file_exists_in_root_directory(const char *filename) {
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		char *current_file = (char *) root_directory[i].filename;
+		if(strcmp(current_file, filename) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool validate_file_creation(const char *filename)
 {
 	// Validate filename
@@ -262,11 +319,8 @@ bool validate_file_creation(const char *filename)
 	}
 
 	// File should not already exists
-	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
-		char *current_file = (char *) root_directory[i].filename;
-        if(strcmp(current_file, filename) == 0) {
-			return false;
-		}
+	if (file_exists_in_root_directory(filename)) {
+		return false;
 	}
 
     return true;
@@ -279,16 +333,34 @@ bool validate_file_deletion(const char *filename) {
 	}
 
 	// File must exists in root directory
-	bool file_exists = false;
-	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
-		char *current_file = (char *) root_directory[i].filename;
-        if(strcmp(current_file, filename) == 0) {
-			file_exists = true;
+	if (!file_exists_in_root_directory(filename)) {
+		return false;
+	}
+
+	return true;
+}
+
+bool validate_file_opening(const char *filename) {
+	// Validate filename
+	if (!validate_filename(filename)) {
+		return false;
+	}
+
+	// File must exist in root directory
+	if (!file_exists_in_root_directory(filename)) {
+		return false;
+	}
+
+	// File descriptor must be available
+	file_descriptor_entry_t free_file_descriptor_entry = NULL;
+	for (int i = 0; i < FILE_NUM; i++) {
+		if (!file_descriptor_table[i]->is_open) {
+			free_file_descriptor_entry = file_descriptor_table[i];
 			break;
 		}
 	}
 
-	if (!file_exists) {
+	if (free_file_descriptor_entry == NULL) {
 		return false;
 	}
 
@@ -297,6 +369,11 @@ bool validate_file_deletion(const char *filename) {
 
 int fs_create(const char *filename)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
 	// Check if filename is valid for creation
 	if (!validate_file_creation(filename)) {
 		return -1;
@@ -320,6 +397,11 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
 	// Check if filename is valid for deletion
 	if (!validate_file_deletion(filename)) {
 		return -1;
@@ -359,6 +441,12 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
+	// Print files in specific format
 	printf("FS Ls:\n");
 
 	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
@@ -377,22 +465,102 @@ int fs_ls(void)
 
 int fs_open(const char *filename)
 {
-	/* TODO: Phase 3 */
+	if (!disk_open
+		|| block_disk_count() == -1
+		|| !validate_file_opening(filename)) {
+		return -1;
+	}
+
+	// Find free file descriptor
+	file_descriptor_entry_t free_file_descriptor_entry = NULL;
+	for (int fd = 0; fd < FILE_NUM; fd++) {
+		if (!file_descriptor_table[fd]->is_open) {
+			free_file_descriptor_entry = file_descriptor_table[fd];
+			break;
+		}
+	}
+
+	if (free_file_descriptor_entry == NULL) {
+		return -1;
+	}
+
+	// Find file entry for filename
+	file_entry_t file_entry = NULL;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (strcmp(root_directory[i].filename, filename) == 0) {
+			file_entry = &root_directory[i];
+			break;
+		}
+	}
+
+	if (file_entry == NULL) {
+		return -1;
+	}
+
+	// Initialize file descriptor
+	free_file_descriptor_entry->file_entry = file_entry;
+	free_file_descriptor_entry->is_open = true;
+	free_file_descriptor_entry->offset = 0;
+
+	return free_file_descriptor_entry->fd;
+}
+
+bool validate_fd(int fd) {
+	// Validate that fd is in range and that fd is open
+	return fd >= 0 && fd < FILE_NUM && file_descriptor_table[fd]->is_open;
 }
 
 int fs_close(int fd)
 {
-	/* TODO: Phase 3 */
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
+	// Validate fd
+	if (!validate_fd(fd)) {
+		return -1;
+	}
+
+	// Close fd
+	file_descriptor_table[fd]->is_open = false;
+	return 0;
 }
 
 int fs_stat(int fd)
 {
-	/* TODO: Phase 3 */
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
+	// Validate fd
+	if (!validate_fd(fd)) {
+		return -1;
+	}
+
+	return file_descriptor_table[fd]->file_entry->file_size;
 }
 
 int fs_lseek(int fd, size_t offset)
 {
-	/* TODO: Phase 3 */
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
+	// Validate fd
+	if (!validate_fd(fd)) {
+		return -1;
+	}
+
+	// Validate offset
+	if (offset < 0 || offset > file_descriptor_table[fd]->file_entry->file_size) {
+		return -1;
+	}
+
+	file_descriptor_table[fd]->offset = offset;
+	return 0;
 }
 
 int fs_write(int fd, void *buf, size_t count)
