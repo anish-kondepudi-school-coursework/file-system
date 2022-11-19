@@ -292,7 +292,7 @@ bool validate_filename(const char *filename) {
 bool file_exists_in_root_directory(const char *filename) {
 	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
 		char *current_file = (char *) root_directory[i].filename;
-        if(strcmp(current_file, filename) == 0) {
+		if(strcmp(current_file, filename) == 0) {
 			return true;
 		}
 	}
