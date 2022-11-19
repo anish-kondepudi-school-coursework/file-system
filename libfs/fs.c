@@ -369,6 +369,11 @@ bool validate_file_opening(const char *filename) {
 
 int fs_create(const char *filename)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
 	// Check if filename is valid for creation
 	if (!validate_file_creation(filename)) {
 		return -1;
@@ -392,6 +397,11 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
 	// Check if filename is valid for deletion
 	if (!validate_file_deletion(filename)) {
 		return -1;
@@ -431,6 +441,12 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
+	// Print files in specific format
 	printf("FS Ls:\n");
 
 	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
@@ -491,6 +507,11 @@ int fs_open(const char *filename)
 
 int fs_close(int fd)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
 	// Validate that fd is in range
 	if (fd < 0 || fd > FILE_NUM) {
 		return -1;
@@ -508,11 +529,21 @@ int fs_close(int fd)
 
 int fs_stat(int fd)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
 	/* TODO: Phase 3 */
 }
 
 int fs_lseek(int fd, size_t offset)
 {
+	// Check if disk is open
+	if (!disk_open) {
+		return -1;
+	}
+
 	/* TODO: Phase 3 */
 }
 
