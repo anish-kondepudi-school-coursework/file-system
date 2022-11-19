@@ -555,7 +555,7 @@ int fs_lseek(int fd, size_t offset)
 	}
 
 	// Validate offset
-	if (offset < 0 || offset >= file_descriptor_table[fd]->file_entry->file_size) {
+	if (offset < 0 || offset > file_descriptor_table[fd]->file_entry->file_size) {
 		return -1;
 	}
 
