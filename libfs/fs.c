@@ -505,6 +505,10 @@ int fs_open(const char *filename)
 	return free_file_descriptor_entry->fd;
 }
 
+bool validate_fd_in_bounds(int fd) {
+	return (fd < 0 || fd > FILE_NUM);
+}
+
 int fs_close(int fd)
 {
 	// Check if disk is open
@@ -513,7 +517,7 @@ int fs_close(int fd)
 	}
 
 	// Validate that fd is in range
-	if (fd < 0 || fd > FILE_NUM) {
+	if (!validate_fd_in_bounds(fd)) {
 		return -1;
 	}
 
@@ -534,7 +538,17 @@ int fs_stat(int fd)
 		return -1;
 	}
 
-	/* TODO: Phase 3 */
+	// Validate that fd is in range
+	if (!validate_fd_in_bounds(fd)) {
+		return -1;
+	}
+
+	// Validate that fd is open
+	if (!file_descriptor_table[fd]->is_open) {
+		return -1;
+	}
+
+	return file_descriptor_table[fd]->file_entry->file_size;
 }
 
 int fs_lseek(int fd, size_t offset)
