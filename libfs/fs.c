@@ -44,20 +44,22 @@ struct __attribute__ ((__packed__)) file_entry {
 	uint8_t padding[FILE_ENTRY_PADDING];
 };
 
-struct file_descriptor {
+struct file_descriptor_entry {
 	file_entry_t file_entry;
 	int offset;
+	int fd;
+	bool is_open;
 };
 
 typedef struct superblock *superblock_t;
 typedef struct fat *fat_t;
 typedef struct file_entry *file_entry_t;
-typedef struct file_descriptor *file_descriptor_t;
+typedef struct file_descriptor_entry *file_descriptor_entry_t;
 
 superblock_t superblock;
 fat_t fat;
 file_entry_t root_directory; //will be an array of size 128 though, each of size 32
-file_descriptor_t *file_descriptors;
+file_descriptor_entry_t *file_descriptor_table;
 
 uint8_t num_files_open;
 bool disk_open;
@@ -125,6 +127,24 @@ bool validate_fat() {
 	return true;
 }
 
+int initialize_file_descriptor_table() {
+	for (int fd = 0; fd < FILE_NUM; fd++) {
+		file_descriptor_entry_t file_descriptor_entry = malloc(sizeof(struct file_descriptor_entry));
+		if (file_descriptor_entry == NULL) {
+			return -1;
+		}
+
+		file_descriptor_entry->file_entry = NULL;
+		file_descriptor_entry->offset = 0;
+		file_descriptor_entry->fd = fd;
+		file_descriptor_entry->is_open = false;
+
+		file_descriptor_table[fd] = file_descriptor_entry;
+	}
+
+	return 0;
+}
+
 int fs_mount(const char *diskname)
 {
 	// Handle case where disk is already open
@@ -141,11 +161,11 @@ int fs_mount(const char *diskname)
 	superblock = malloc(sizeof(struct superblock));
 	fat = malloc(sizeof(struct fat));
 	root_directory = malloc(FS_FILE_MAX_COUNT * sizeof(struct file_entry));
-	file_descriptors = malloc(FILE_NUM * sizeof(struct file_descriptor));
+	file_descriptor_table = malloc(FILE_NUM * sizeof(struct file_descriptor_entry));
 	if (superblock == NULL
 		|| fat == NULL
 		|| root_directory == NULL
-		|| file_descriptors == NULL) {
+		|| file_descriptor_table == NULL) {
 		return -1;
 	}
 
@@ -174,9 +194,9 @@ int fs_mount(const char *diskname)
 	// Read root directory from disk
 	block_read(superblock->root_directory_block_index, root_directory);
 
-	// Initialize file_descriptors
-	for (int i = 0; i < FILE_NUM; i++) {
-		file_descriptors[FILE_NUM] = NULL;
+	// Initialize file_descriptors_table
+	if (initialize_file_descriptor_table() == -1) {
+		return -1;
 	}
 
 	return 0;
@@ -210,6 +230,10 @@ int fs_umount(void)
 	free(superblock);
 	free(fat);
 	free(root_directory);
+	for (int i = 0; i < FILE_NUM; i++) {
+		free(file_descriptor_table[i]);
+	}
+	free(file_descriptor_table);
 
 	// Mark disc as closed
 	disk_open = false;
@@ -323,14 +347,15 @@ bool validate_file_opening(const char *filename) {
 	}
 
 	// File descriptor must be available
-	int free_file_descriptors = 0;
+	file_descriptor_entry_t free_file_descriptor_entry = NULL;
 	for (int i = 0; i < FILE_NUM; i++) {
-		if (file_descriptors[i] != NULL) {
-			free_file_descriptors++;
+		if (!file_descriptor_table[i]->is_open) {
+			free_file_descriptor_entry = file_descriptor_table[i];
+			break;
 		}
 	}
 
-	if (free_file_descriptors == 0) {
+	if (free_file_descriptor_entry == NULL) {
 		return false;
 	}
 
@@ -426,15 +451,15 @@ int fs_open(const char *filename)
 	}
 
 	// Find free file descriptor
-	int free_file_descriptor_idx = -1;
-	for (int i = 0; i < FILE_NUM; i++) {
-		if (file_descriptors[i] == NULL) {
-			free_file_descriptor_idx = i;
+	file_descriptor_entry_t free_file_descriptor_entry = NULL;
+	for (int fd = 0; fd < FILE_NUM; fd++) {
+		if (!file_descriptor_table[fd]->is_open) {
+			free_file_descriptor_entry = file_descriptor_table[fd];
 			break;
 		}
 	}
 
-	if (free_file_descriptor_idx == -1) {
+	if (free_file_descriptor_entry == NULL) {
 		return -1;
 	}
 
@@ -451,16 +476,12 @@ int fs_open(const char *filename)
 		return -1;
 	}
 
-	// Create file descriptor
-	file_descriptors[free_file_descriptor_idx] = malloc(sizeof(sizeof(struct file_descriptor)));
-	if(file_descriptors[free_file_descriptor_idx] == NULL) {
-		return -1;
-	}
+	// Initialize file descriptor
+	free_file_descriptor_entry->file_entry = file_entry;
+	free_file_descriptor_entry->is_open = true;
+	free_file_descriptor_entry->offset = 0;
 
-	file_descriptors[free_file_descriptor_idx]->file_entry = file_entry;
-	file_descriptors[free_file_descriptor_idx]->offset = 0;
-
-	return free_file_descriptor_idx;
+	return free_file_descriptor_entry->fd;
 }
 
 int fs_close(int fd)
