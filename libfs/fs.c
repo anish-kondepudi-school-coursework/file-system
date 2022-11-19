@@ -259,6 +259,11 @@ int fs_info(void)
 }
 
 bool validate_filename(const char *filename) {
+	// Filename can't be null
+	if (filename == NULL) {
+		return false;
+	}
+
 	// Filename can't be empty
 	if (filename[0] == '\0') {
 		return false;
