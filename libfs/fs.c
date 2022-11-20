@@ -62,6 +62,7 @@ file_entry_t root_directory; //will be an array of size 128 though, each of size
 file_descriptor_entry_t *file_descriptor_table;
 
 uint8_t num_files_open;
+uint8_t num_files_total;
 bool disk_open;
 
 bool validate_superblock() {
@@ -194,6 +195,14 @@ int fs_mount(const char *diskname)
 	// Read root directory from disk
 	block_read(superblock->root_directory_block_index, root_directory);
 
+	// Determine the number of files in the root directory
+	num_files_total = 0;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename[0] != 0) {
+			num_files_total++;
+		}
+	}
+
 	// Initialize file_descriptors_table
 	if (initialize_file_descriptor_table() == -1) {
 		return -1;
@@ -253,7 +262,7 @@ int fs_info(void)
 	printf("data_blk=%d\n", superblock->num_fat_blocks+2);
 	printf("data_blk_count=%d\n", superblock->num_data_blocks);
 	printf("fat_free_ratio=%d/%d\n", fat->fat_free, superblock->num_data_blocks);
-	printf("rdir_free_ratio=%d/%d\n", 128-num_files_open, 128);
+	printf("rdir_free_ratio=%d/%d\n", 128-num_files_total, 128);
 
 	return 0;
 }
@@ -306,7 +315,7 @@ bool validate_file_creation(const char *filename)
 		return false;
 	}
 
-    // Root directory must have enough space for new file
+	// Root directory must have enough space for new file
 	int num_files_in_root_directory = 0;
 	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
 		if (root_directory[i].filename[0] != '\0') {
@@ -388,6 +397,7 @@ int fs_create(const char *filename)
 		strcpy(root_directory[i].filename, filename);
 		root_directory[i].file_size = 0;
 		root_directory[i].index_first_data_block = FAT_EOC;
+		num_files_total++;
 		return 0;
 	}
 
@@ -435,7 +445,7 @@ int fs_delete(const char *filename)
 	file_entry->filename[0] = 0;
 	file_entry->file_size = 0;
 	file_entry->index_first_data_block = 0;
-
+	num_files_total--;
 	return 0;
 }
 
@@ -501,7 +511,7 @@ int fs_open(const char *filename)
 	free_file_descriptor_entry->file_entry = file_entry;
 	free_file_descriptor_entry->is_open = true;
 	free_file_descriptor_entry->offset = 0;
-
+	num_files_open++;
 	return free_file_descriptor_entry->fd;
 }
 
@@ -524,6 +534,7 @@ int fs_close(int fd)
 
 	// Close fd
 	file_descriptor_table[fd]->is_open = false;
+	num_files_open--;
 	return 0;
 }
 
@@ -555,7 +566,7 @@ int fs_lseek(int fd, size_t offset)
 	}
 
 	// Validate offset
-	if (offset < 0 || offset > file_descriptor_table[fd]->file_entry->file_size) {
+	if (offset > file_descriptor_table[fd]->file_entry->file_size) {
 		return -1;
 	}
 
@@ -570,6 +581,72 @@ int fs_write(int fd, void *buf, size_t count)
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
+	// Error checking
+	if (!disk_open || !validate_fd(fd) || buf == NULL) {
+		return -1;
+	}
+	uint8_t *output_buffer = (uint8_t*)buf;
+	// If the count is 0, then no point doing anything: just return 0 bytes read
+	if (count == 0) {
+		return 0;
+	}
+
+	file_descriptor_entry_t file = file_descriptor_table[fd];
+	int offset_in_block = file->offset%BLOCK_SIZE;
+	//what block is the offset in
+	//previously file_offset_block_location
+	int start_block_location = file->offset/BLOCK_SIZE; //divided 2 ints will return only the quotient
+	size_t bytes_read = 0;
+	size_t bytes_left_to_read = count;
+	if (count > file->file_entry->file_size - file->offset) {
+		//count is more than there are bytes to read
+		bytes_left_to_read = file->file_entry->file_size - file->offset;
+	}
+	size_t output_buffer_index = 0;
+
+	//first get the data block index of the offset
+	int fat_idx = file->file_entry->index_first_data_block;
+	int current_block_in_file = 0;
+	while (current_block_in_file < start_block_location) {
+		fat_idx = fat->entries[fat_idx];
+		current_block_in_file++;
+	}
+	uint8_t *buffer = malloc(BLOCK_SIZE);
+
+	int block_read_start = offset_in_block;
+	int block_read_finish = offset_in_block + count;
+	if (block_read_finish > BLOCK_SIZE) {
+		//going to have to read across multiple blocks. for now, set it to the max
+		block_read_finish = BLOCK_SIZE;
+	}
+
+	while (bytes_left_to_read > 0) {
+		int block_read_amount = block_read_finish - block_read_start;
+		block_read(fat_idx + superblock->data_block_start_index, buffer);
+		memcpy(&output_buffer[output_buffer_index], &buffer[offset_in_block], block_read_amount);
+		file->offset += block_read_amount;
+		output_buffer_index += block_read_amount;
+		bytes_left_to_read -= block_read_amount;
+		bytes_read += block_read_amount;
+		fat_idx = fat->entries[fat_idx];
+		block_read_start = 0;
+		block_read_finish = bytes_left_to_read;
+		if (block_read_finish >= BLOCK_SIZE) {
+			block_read_finish = BLOCK_SIZE;
+		}
+	}
+
+	return bytes_read;
+	//3 cases:
+	//read from offset for count bytes. all within 1 block
+	//read from offset until end of block
+	//read entire block
+	//wait all of these are just read from X to Y in block Z
+	//so set it up to generalize such that Z is incremented one at a time as necessary
+	//when reading an entire block, X is 0 and Y is the block size
+	//when reading offset for count bytes, X is offset and Y is offset + count
+	//when reading from offset until end, X is offset and Y is block size
+	//the issue is chaining them together
+
 }
 
