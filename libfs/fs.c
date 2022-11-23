@@ -607,6 +607,7 @@ int fs_write(int fd, void *buf, size_t count)
 		// file was empty, needs an initial block
 		blocks_to_add++;
 		new_file = true;
+		//printf("it is a new file\n");
 	}
 	int fat_idx = file->file_entry->index_first_data_block;
 	int last_fat_block_id = 0;
@@ -618,10 +619,10 @@ int fs_write(int fd, void *buf, size_t count)
 	size_t bytes_to_write_in_last_block = (offset_in_block + count)%BLOCK_SIZE;
 	while (blocks_to_add > 0) {
 		// first search for empty fat block to take
-		while (fat->entries[fat_search_index] > 0 && fat_search_index <= superblock->num_data_blocks) {
+		while (fat->entries[fat_search_index] > 0 && fat_search_index < superblock->num_data_blocks) {
 			fat_search_index++;
 		}
-		if (fat_search_index > superblock->num_data_blocks) {
+		if (fat_search_index >= superblock->num_data_blocks) {
 			// out of memory to write to, so reduce the number of bytes left to write
 			while (blocks_to_add > 1) {
 				bytes_left_to_write -= BLOCK_SIZE;
@@ -635,6 +636,7 @@ int fs_write(int fd, void *buf, size_t count)
 			if (new_file) {
 				fat->entries[fat_search_index] = FAT_EOC;
 				file->file_entry->index_first_data_block = fat_search_index;
+				last_fat_block_id = fat_search_index;
 				new_file = false;
 			}
 			else {
@@ -650,6 +652,7 @@ int fs_write(int fd, void *buf, size_t count)
 	// fat blocks are now set up, so just left to write
 	fat_idx = file->file_entry->index_first_data_block;
 	int current_block_in_file = 0;
+	//printf("start block: %d\n", start_block_location);
 	while (current_block_in_file < start_block_location) {
 		fat_idx = fat->entries[fat_idx];
 		current_block_in_file++;
@@ -662,6 +665,7 @@ int fs_write(int fd, void *buf, size_t count)
 	if (block_write_finish > BLOCK_SIZE) {
 		block_write_finish = BLOCK_SIZE;
 	}
+	//printf("bytes to write: %lu\n", bytes_left_to_write);
 	while (bytes_left_to_write > 0) {
 		int block_write_amount = block_write_finish - block_write_start;
 		block_read(fat_idx + superblock->data_block_start_index, buffer);
