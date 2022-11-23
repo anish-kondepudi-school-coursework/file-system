@@ -1,0 +1,7 @@
+MOUNT
+CREATE	file_fs
+OPEN	file_fs
+WRITE	FILE	scripts/file_that_is_larger_than_disk
+CLOSE
+DELETE	file_fs
+UMOUNT
