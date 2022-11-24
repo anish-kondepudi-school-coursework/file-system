@@ -18,6 +18,7 @@
 
 #define FAT_EOC 0xFFFF
 #define FIRST_FAT_BLOCK_INDEX 1
+#define MAX_DATA_BLOCKS 8192
 
 #define FILE_NUM 32
 
@@ -102,7 +103,7 @@ int initialize_fat() {
 	// Initialize fat data members
 	fat->num_entries = superblock->num_data_blocks;
 	fat->fat_free = superblock->num_data_blocks - 1;
-	fat->entries = malloc(superblock->num_data_blocks * sizeof(uint16_t));
+	fat->entries = malloc(MAX_DATA_BLOCKS * sizeof(uint16_t));
 
 	// Handle case where malloc fails
 	if (fat->entries == NULL) {
