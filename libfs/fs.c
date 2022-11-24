@@ -62,6 +62,7 @@ file_entry_t root_directory; //will be an array of size 128 though, each of size
 file_descriptor_entry_t *file_descriptor_table;
 
 uint8_t num_files_open;
+uint8_t num_files_total;
 bool disk_open;
 
 bool validate_superblock() {
@@ -113,7 +114,13 @@ int initialize_fat() {
 		// each entry of fat is 2 bytes, while each block is 4096 bytes. So 2048 entries per block
 		block_read(fat_block_idx, &(fat->entries[(fat_block_idx - 1) * (BLOCK_SIZE / 2)]));
 	}
-
+	
+	// Count amount of free fat
+	for (int i = 1; i < superblock->num_data_blocks; i++) {
+		if (fat->entries[i] != 0) {
+			fat->fat_free--;
+		}
+	}
 	return 0;
 }
 
@@ -194,6 +201,14 @@ int fs_mount(const char *diskname)
 	// Read root directory from disk
 	block_read(superblock->root_directory_block_index, root_directory);
 
+	// Determine the number of files in the root directory
+	num_files_total = 0;
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_directory[i].filename[0] != 0) {
+			num_files_total++;
+		}
+	}
+
 	// Initialize file_descriptors_table
 	if (initialize_file_descriptor_table() == -1) {
 		return -1;
@@ -253,7 +268,7 @@ int fs_info(void)
 	printf("data_blk=%d\n", superblock->num_fat_blocks+2);
 	printf("data_blk_count=%d\n", superblock->num_data_blocks);
 	printf("fat_free_ratio=%d/%d\n", fat->fat_free, superblock->num_data_blocks);
-	printf("rdir_free_ratio=%d/%d\n", 128-num_files_open, 128);
+	printf("rdir_free_ratio=%d/%d\n", 128-num_files_total, 128);
 
 	return 0;
 }
@@ -306,7 +321,7 @@ bool validate_file_creation(const char *filename)
 		return false;
 	}
 
-    // Root directory must have enough space for new file
+	// Root directory must have enough space for new file
 	int num_files_in_root_directory = 0;
 	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
 		if (root_directory[i].filename[0] != '\0') {
@@ -388,6 +403,7 @@ int fs_create(const char *filename)
 		strcpy(root_directory[i].filename, filename);
 		root_directory[i].file_size = 0;
 		root_directory[i].index_first_data_block = FAT_EOC;
+		num_files_total++;
 		return 0;
 	}
 
@@ -435,7 +451,7 @@ int fs_delete(const char *filename)
 	file_entry->filename[0] = 0;
 	file_entry->file_size = 0;
 	file_entry->index_first_data_block = 0;
-
+	num_files_total--;
 	return 0;
 }
 
@@ -501,7 +517,7 @@ int fs_open(const char *filename)
 	free_file_descriptor_entry->file_entry = file_entry;
 	free_file_descriptor_entry->is_open = true;
 	free_file_descriptor_entry->offset = 0;
-
+	num_files_open++;
 	return free_file_descriptor_entry->fd;
 }
 
@@ -524,6 +540,7 @@ int fs_close(int fd)
 
 	// Close fd
 	file_descriptor_table[fd]->is_open = false;
+	num_files_open--;
 	return 0;
 }
 
@@ -555,7 +572,7 @@ int fs_lseek(int fd, size_t offset)
 	}
 
 	// Validate offset
-	if (offset < 0 || offset > file_descriptor_table[fd]->file_entry->file_size) {
+	if (offset > file_descriptor_table[fd]->file_entry->file_size) {
 		return -1;
 	}
 
@@ -565,11 +582,167 @@ int fs_lseek(int fd, size_t offset)
 
 int fs_write(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
+	// Error checking
+	if (!disk_open || !validate_fd(fd) || buf == NULL) {
+		return -1;
+	}
+	uint8_t *input_buffer = (uint8_t*)buf;
+
+	// If the count is 0, then no point doing anything: just return 0 bytes written
+	if (count == 0) {
+		return 0;
+	}
+
+	file_descriptor_entry_t file = file_descriptor_table[fd];
+	int offset_in_block = file->offset%BLOCK_SIZE;
+	int start_block_location = file->offset/BLOCK_SIZE;
+	size_t bytes_written = 0;
+	size_t bytes_left_to_write = count;
+	size_t input_buffer_index = 0;
+
+	// First check if we need to add data/FAT blocks
+	int blocks_to_add = (offset_in_block + count - 1)/BLOCK_SIZE;
+	bool new_file = false;
+	if (file->file_entry->index_first_data_block == FAT_EOC) {
+		// file was empty, needs an initial block
+		blocks_to_add++;
+		new_file = true;
+	}
+	int fat_idx = file->file_entry->index_first_data_block;
+	int last_fat_block_id = 0;
+	while (fat_idx != FAT_EOC) {
+		last_fat_block_id = fat_idx;
+		fat_idx = fat->entries[fat_idx];
+	}
+	int fat_search_index = 0;
+	size_t bytes_to_write_in_last_block = (offset_in_block + count)%BLOCK_SIZE;
+	while (blocks_to_add > 0) {
+		// first search for empty fat block to take
+		while (fat->entries[fat_search_index] > 0 && fat_search_index <= superblock->num_data_blocks) {
+			fat_search_index++;
+		}
+		if (fat_search_index > superblock->num_data_blocks) {
+			// out of memory to write to, so reduce the number of bytes left to write
+			while (blocks_to_add > 1) {
+				bytes_left_to_write -= BLOCK_SIZE;
+				blocks_to_add--;
+			}
+			bytes_left_to_write -= bytes_to_write_in_last_block;
+			blocks_to_add--;
+		}
+		else {
+			//add a new block
+			if (new_file) {
+				fat->entries[fat_search_index] = FAT_EOC;
+				file->file_entry->index_first_data_block = fat_search_index;
+				new_file = false;
+			}
+			else {
+				fat->entries[last_fat_block_id] = fat_search_index;
+				last_fat_block_id = fat_search_index;
+				fat->entries[last_fat_block_id] = FAT_EOC;
+			}
+			fat->fat_free--;
+			blocks_to_add--;
+		}
+	}
+
+	// fat blocks are now set up, so just left to write
+	fat_idx = file->file_entry->index_first_data_block;
+	int current_block_in_file = 0;
+	while (current_block_in_file < start_block_location) {
+		fat_idx = fat->entries[fat_idx];
+		current_block_in_file++;
+	}
+
+	uint8_t* buffer = malloc(BLOCK_SIZE);
+
+	int block_write_start = offset_in_block;
+	int block_write_finish = offset_in_block + bytes_left_to_write;
+	if (block_write_finish > BLOCK_SIZE) {
+		block_write_finish = BLOCK_SIZE;
+	}
+	while (bytes_left_to_write > 0) {
+		int block_write_amount = block_write_finish - block_write_start;
+		block_read(fat_idx + superblock->data_block_start_index, buffer);
+		memcpy(&buffer[block_write_start], &input_buffer[input_buffer_index], block_write_amount);
+		block_write(fat_idx + superblock->data_block_start_index, buffer);
+		file->offset += block_write_amount;
+		if (file->offset > (int)file->file_entry->file_size) {
+			file->file_entry->file_size = file->offset;
+		}
+		input_buffer_index += block_write_amount;
+		bytes_written += block_write_amount;
+		bytes_left_to_write -= block_write_amount;
+		fat_idx = fat->entries[fat_idx];
+		block_write_start = 0;
+		block_write_finish = bytes_left_to_write;
+		if (block_write_finish > BLOCK_SIZE) {
+			block_write_finish = BLOCK_SIZE;
+		}
+	}
+	free(buffer);
+	return bytes_written;
 }
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
+	// Error checking
+	if (!disk_open || !validate_fd(fd) || buf == NULL) {
+		return -1;
+	}
+	uint8_t *output_buffer = (uint8_t*)buf;
+	// If the count is 0, then no point doing anything: just return 0 bytes read
+	if (count == 0) {
+		return 0;
+	}
+
+	file_descriptor_entry_t file = file_descriptor_table[fd];
+	int offset_in_block = file->offset%BLOCK_SIZE;
+	//what block is the offset in
+	//previously file_offset_block_location
+	int start_block_location = file->offset/BLOCK_SIZE; //divided 2 ints will return only the quotient
+	size_t bytes_read = 0;
+	size_t bytes_left_to_read = count;
+	if (count > file->file_entry->file_size - file->offset) {
+		//count is more than there are bytes to read
+		bytes_left_to_read = file->file_entry->file_size - file->offset;
+	}
+	size_t output_buffer_index = 0;
+
+	//first get the data block index of the offset
+	int fat_idx = file->file_entry->index_first_data_block;
+	int current_block_in_file = 0;
+	while (current_block_in_file < start_block_location) {
+		fat_idx = fat->entries[fat_idx];
+		current_block_in_file++;
+	}
+	uint8_t *buffer = malloc(BLOCK_SIZE);
+
+	int block_read_start = offset_in_block;
+	int block_read_finish = offset_in_block + bytes_left_to_read;
+	if (block_read_finish > BLOCK_SIZE) {
+		//going to have to read across multiple blocks. for now, set it to the max
+		block_read_finish = BLOCK_SIZE;
+	}
+
+	while (bytes_left_to_read > 0) {
+		int block_read_amount = block_read_finish - block_read_start;
+		block_read(fat_idx + superblock->data_block_start_index, buffer);
+		memcpy(&output_buffer[output_buffer_index], &buffer[block_read_start], block_read_amount);
+		file->offset += block_read_amount;
+		output_buffer_index += block_read_amount;
+		bytes_left_to_read -= block_read_amount;
+		bytes_read += block_read_amount;
+		fat_idx = fat->entries[fat_idx];
+		block_read_start = 0;
+		block_read_finish = bytes_left_to_read;
+		if (block_read_finish > BLOCK_SIZE) {
+			block_read_finish = BLOCK_SIZE;
+		}
+	}
+
+	free(buffer);
+	return bytes_read;
 }
 

@@ -1,0 +1,7 @@
+MOUNT
+OPEN	testFileWrite
+SEEK	5
+WRITE	FILE	scriptSource
+CLOSE	testFileWrite
+UMOUNT
+
