@@ -1,0 +1,10 @@
+MOUNT
+CREATE	file_fs
+OPEN	file_fs
+WRITE	FILE	testFileMed
+SEEK	0
+READ	100000	FILE	testFileMed
+CLOSE
+DELETE	file_fs
+UMOUNT
+

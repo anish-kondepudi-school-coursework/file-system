@@ -18,6 +18,7 @@
 
 #define FAT_EOC 0xFFFF
 #define FIRST_FAT_BLOCK_INDEX 1
+#define MAX_DATA_BLOCKS 8192
 
 #define FILE_NUM 32
 
@@ -102,7 +103,7 @@ int initialize_fat() {
 	// Initialize fat data members
 	fat->num_entries = superblock->num_data_blocks;
 	fat->fat_free = superblock->num_data_blocks - 1;
-	fat->entries = malloc(superblock->num_data_blocks * sizeof(uint16_t));
+	fat->entries = malloc(MAX_DATA_BLOCKS * sizeof(uint16_t));
 
 	// Handle case where malloc fails
 	if (fat->entries == NULL) {
@@ -114,7 +115,7 @@ int initialize_fat() {
 		// each entry of fat is 2 bytes, while each block is 4096 bytes. So 2048 entries per block
 		block_read(fat_block_idx, &(fat->entries[(fat_block_idx - 1) * (BLOCK_SIZE / 2)]));
 	}
-	
+
 	// Count amount of free fat
 	for (int i = 1; i < superblock->num_data_blocks; i++) {
 		if (fat->entries[i] != 0) {
@@ -438,6 +439,14 @@ int fs_delete(const char *filename)
 		return -1;
 	}
 
+	// Make sure file is not currently open
+	for (int i = 0; i < FS_OPEN_MAX_COUNT; i++) {
+		if (file_descriptor_table[i]->is_open &&
+			strcmp(file_descriptor_table[i]->file_entry->filename, filename) == 0) {
+				return -1;
+			}
+	}
+
 	// Clear FAT chain
 	int fat_idx = file_entry->index_first_data_block;
 	while (fat_idx != FAT_EOC) {
@@ -607,6 +616,7 @@ int fs_write(int fd, void *buf, size_t count)
 		// file was empty, needs an initial block
 		blocks_to_add++;
 		new_file = true;
+		//printf("it is a new file\n");
 	}
 	int fat_idx = file->file_entry->index_first_data_block;
 	int last_fat_block_id = 0;
@@ -618,10 +628,10 @@ int fs_write(int fd, void *buf, size_t count)
 	size_t bytes_to_write_in_last_block = (offset_in_block + count)%BLOCK_SIZE;
 	while (blocks_to_add > 0) {
 		// first search for empty fat block to take
-		while (fat->entries[fat_search_index] > 0 && fat_search_index <= superblock->num_data_blocks) {
+		while (fat->entries[fat_search_index] > 0 && fat_search_index < superblock->num_data_blocks) {
 			fat_search_index++;
 		}
-		if (fat_search_index > superblock->num_data_blocks) {
+		if (fat_search_index >= superblock->num_data_blocks) {
 			// out of memory to write to, so reduce the number of bytes left to write
 			while (blocks_to_add > 1) {
 				bytes_left_to_write -= BLOCK_SIZE;
@@ -635,6 +645,7 @@ int fs_write(int fd, void *buf, size_t count)
 			if (new_file) {
 				fat->entries[fat_search_index] = FAT_EOC;
 				file->file_entry->index_first_data_block = fat_search_index;
+				last_fat_block_id = fat_search_index;
 				new_file = false;
 			}
 			else {
@@ -650,6 +661,7 @@ int fs_write(int fd, void *buf, size_t count)
 	// fat blocks are now set up, so just left to write
 	fat_idx = file->file_entry->index_first_data_block;
 	int current_block_in_file = 0;
+	//printf("start block: %d\n", start_block_location);
 	while (current_block_in_file < start_block_location) {
 		fat_idx = fat->entries[fat_idx];
 		current_block_in_file++;
@@ -662,6 +674,7 @@ int fs_write(int fd, void *buf, size_t count)
 	if (block_write_finish > BLOCK_SIZE) {
 		block_write_finish = BLOCK_SIZE;
 	}
+	//printf("bytes to write: %lu\n", bytes_left_to_write);
 	while (bytes_left_to_write > 0) {
 		int block_write_amount = block_write_finish - block_write_start;
 		block_read(fat_idx + superblock->data_block_start_index, buffer);
