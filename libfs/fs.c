@@ -115,7 +115,7 @@ int initialize_fat() {
 		// each entry of fat is 2 bytes, while each block is 4096 bytes. So 2048 entries per block
 		block_read(fat_block_idx, &(fat->entries[(fat_block_idx - 1) * (BLOCK_SIZE / 2)]));
 	}
-	
+
 	// Count amount of free fat
 	for (int i = 1; i < superblock->num_data_blocks; i++) {
 		if (fat->entries[i] != 0) {
@@ -437,6 +437,14 @@ int fs_delete(const char *filename)
 	// Return error if no file was found in directory
 	if (file_entry == NULL) {
 		return -1;
+	}
+
+	// Make sure file is not currently open
+	for (int i = 0; i < FS_OPEN_MAX_COUNT; i++) {
+		if (file_descriptor_table[i]->is_open &&
+			strcmp(file_descriptor_table[i]->file_entry->filename, filename) == 0) {
+				return -1;
+			}
 	}
 
 	// Clear FAT chain
